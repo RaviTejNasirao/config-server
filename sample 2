@@ -1,0 +1,680 @@
+import static com.gap.productcatalog.hbaseacl.kafka.common.KafkaConstants.CONSUMPTION_EXCEPTION_OCCURRED;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.lang3.StringUtils;
+import org.apache.kafka.clients.CommonClientConfigs;
+import org.apache.kafka.clients.consumer.ConsumerConfig;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.apache.kafka.common.config.SslConfigs;
+import org.apache.kafka.common.serialization.StringDeserializer;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.core.task.TaskExecutor;
+import org.springframework.kafka.annotation.EnableKafka;
+import org.springframework.kafka.config.ConcurrentKafkaListenerContainerFactory;
+import org.springframework.kafka.core.DefaultKafkaConsumerFactory;
+import org.springframework.kafka.listener.ContainerProperties;
+import org.springframework.kafka.listener.SeekToCurrentErrorHandler;
+import org.springframework.kafka.support.serializer.ErrorHandlingDeserializer2;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
+
+import com.gap.productcatalog.hbaseacl.kafka.mapper.TopicMapperCache;
+
+import io.confluent.kafka.serializers.KafkaAvroDeserializer;
+import io.confluent.kafka.serializers.KafkaAvroDeserializerConfig;
+
+@EnableKafka
+@Configuration
+public class KafkaConsumerConfig {
+
+    private static final Logger LOGGER = LoggerFactory.getLogger(KafkaConsumerConfig.class);
+
+    private static final String SSL = "SSL";
+
+    @Value("${hbase.acl.kafka.auto.offset}")
+    private String autoOffsetConfig;
+
+    @Value("#{'${hbase.acl.kafka.bootstrapAddress}'.split(',')}")
+    private List<String> bootstrapServers;
+
+    @Value("${hbase.acl.kafka.consumer.ca.categories.group-id}")
+    private String categoriesCAConsumerGroupId;
+    
+    @Value("${hbase.acl.kafka.consumer.us.categories.group-id}")
+    private String categoriesUSConsumerGroupId;
+    
+    @Value("${hbase.acl.kafka.consumer.ca.npckscs.group-id}")
+    private String npckscsCAConsumerGroupId;
+    
+    @Value("${hbase.acl.kafka.consumer.us.npckscs.group-id}")
+    private String npckscsUSConsumerGroupId;
+
+    @Value("${hbase.acl.kafka.maxFailures.allowed}")
+    private int maxFailuresAllowed;
+
+    @Value("${hbase.acl.kafka.partition}")
+    private int partition;
+    
+    @Value("${hbase.acl.kafka.concurrency}")
+    private int concurrency;
+
+    @Value("${hbase.acl.kafka.client.truststore.location}")
+    private String clientTrustStoreLocation;
+
+    @Value("${hbase.acl.kafka.client.keystore.location}")
+    private String clientKeyStoreLocation;
+
+    @Value("${hbase.acl.kafka.client.keystore.pwd}")
+    private String sslKeyStorePassword;
+
+    @Value("${hbase.acl.kafka.client.truststore.pwd}")
+    private String sslTrustStorePassword;
+
+    @Value("${hbase.acl.kafka.ssl.key.pwd}")
+    private String sslKeyPassword;
+
+    @Value("${hbase.acl.kafka.security.protocol}")
+    private String securityProtocol;
+
+    @Value("${hbase.acl.kafka.schema.registry.url:@null}")
+    private String schemaRegistryURL;
+
+    private static final String SCHEMA_REGISTRY_URL = "schema.registry.url";
+	
+    @Value("#{'${hbase.acl.topics.ca.categories}'.split(',')}")
+    private List<String> categoryTopicsCA;
+    
+    @Value("#{'${hbase.acl.topics.us.categories}'.split(',')}")
+    private List<String> categoryTopicsUS;
+    
+    @Value("#{'${hbase.acl.topics.ca.npckscs}'.split(',')}")
+    private List<String> npckscsTopicsCA;
+    
+    @Value("#{'${hbase.acl.topics.us.npckscs}'.split(',')}")
+    private List<String> npckscsTopicsUS;
+	
+    @Value("${hbase.acl.kafka.basic.username}")
+    private String basicUsername;
+    
+    @Value("${hbase.acl.kafka.basic.password}")
+    private String basicPassword;
+    
+    @Value("${hbase.acl.kafka.max.poll.interval.ms:30000}")
+    private int maxPollInterval;
+    
+    @Value("${hbase.acl.kafka.session.timeout.ms:500000}")
+    private int sessionTimeout;
+    
+    @Value("${hbase.acl.kafka.max.poll.records:100}")
+    private int maxPollRecords;
+	
+    @Autowired
+    private TopicMapperCache<Object> topicMapperCache;
+
+    @Bean
+    public Map<String, Object> consumerConfigs() {
+        Map<String, Object> props = new HashMap<>();
+        props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
+        props.put(SCHEMA_REGISTRY_URL, this.schemaRegistryURL);
+        props.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, false);
+        props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, autoOffsetConfig);
+        props.put(ConsumerConfig.MAX_POLL_INTERVAL_MS_CONFIG, maxPollInterval);
+        props.put(ConsumerConfig.SESSION_TIMEOUT_MS_CONFIG, sessionTimeout);
+        props.put(ConsumerConfig.MAX_POLL_RECORDS_CONFIG, maxPollRecords);
+        props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, ErrorHandlingDeserializer2.class);
+        props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG,KafkaAvroDeserializer.class.getName());
+        props.put(ErrorHandlingDeserializer2.KEY_DESERIALIZER_CLASS, StringDeserializer.class);
+        props.put(ErrorHandlingDeserializer2.VALUE_DESERIALIZER_CLASS, StringDeserializer.class);
+        props.put(KafkaAvroDeserializerConfig.SPECIFIC_AVRO_READER_CONFIG, "false");
+        
+        /* This Block of setting 'SslConfigs' has to be commented in local,
+         *  if SSL is not configured for Local Confluent Platform
+        */
+        
+        if (StringUtils.equalsIgnoreCase(this.securityProtocol, SSL)) {
+            props.put(SslConfigs.SSL_KEYSTORE_LOCATION_CONFIG,
+                    this.getClass().getResource(this.clientKeyStoreLocation).getPath());
+            props.put(SslConfigs.SSL_KEYSTORE_PASSWORD_CONFIG, this.sslKeyStorePassword);
+            props.put(SslConfigs.SSL_KEY_PASSWORD_CONFIG, this.sslKeyPassword);
+            props.put(SslConfigs.SSL_ENDPOINT_IDENTIFICATION_ALGORITHM_CONFIG,null);
+            props.put(CommonClientConfigs.SECURITY_PROTOCOL_CONFIG, this.securityProtocol);
+        }
+        props.put(SslConfigs.SSL_TRUSTSTORE_LOCATION_CONFIG,
+                this.getClass().getResource(clientTrustStoreLocation).getPath());
+        props.put(SslConfigs.SSL_TRUSTSTORE_PASSWORD_CONFIG, this.sslTrustStorePassword);
+        props.put("basic.auth.credentials.source","USER_INFO");
+        props.put("basic.auth.user.info",basicUsername+":"+basicPassword);
+        
+        return props;
+    }
+
+    @Bean(name = "HBaseAcl_ContainerFactory_CA_Categories")
+    public ConcurrentKafkaListenerContainerFactory<String, String> kafkaCACategoryListenerContainerFactory() {
+    	Map<String, Object> consumerConfigs = consumerConfigs();
+    	consumerConfigs.put(ConsumerConfig.GROUP_ID_CONFIG, categoriesCAConsumerGroupId);
+        return getListenerFactory(consumerConfigs);
+    }
+    
+    @Bean(name = "HBaseAcl_ContainerFactory_US_Categories")
+    public ConcurrentKafkaListenerContainerFactory<String, String> kafkaUSCategoryListenerContainerFactory() {
+    	Map<String, Object> consumerConfigs = consumerConfigs();
+    	consumerConfigs.put(ConsumerConfig.GROUP_ID_CONFIG, categoriesUSConsumerGroupId);
+        return getListenerFactory(consumerConfigs);
+    }
+    
+    @Bean(name = "HBaseAcl_ContainerFactory_CA_npckscs")
+    public ConcurrentKafkaListenerContainerFactory<String, String> kafkaCANPCKSCSListenerContainerFactory() {
+    	Map<String, Object> consumerConfigs = consumerConfigs();
+    	consumerConfigs.put(ConsumerConfig.GROUP_ID_CONFIG, npckscsCAConsumerGroupId);
+        return getListenerFactory(consumerConfigs);
+    }
+    
+    @Bean(name = "HBaseAcl_ContainerFactory_US_npckscs")
+    public ConcurrentKafkaListenerContainerFactory<String, String> kafkaUSNPCKSCSListenerContainerFactory() {
+    	Map<String, Object> consumerConfigs = consumerConfigs();
+    	consumerConfigs.put(ConsumerConfig.GROUP_ID_CONFIG, npckscsUSConsumerGroupId);
+        return getListenerFactory(consumerConfigs);
+    }
+
+	private ConcurrentKafkaListenerContainerFactory<String, String> getListenerFactory(Map<String, Object> consumerConfigs) {
+		ConcurrentKafkaListenerContainerFactory<String, String> factory
+                = new ConcurrentKafkaListenerContainerFactory<>();
+		factory.setConcurrency(concurrency);
+        factory.setConsumerFactory(new DefaultKafkaConsumerFactory<>(consumerConfigs));
+        /*
+		 * Spring Kafka SeekToCurrentErrorHandler maxFailures doesn't work and result in
+		 * infinite loop when concurrency level is less than partition number .
+		 * We need to set factory concurrency equal or more than partition.
+		 * As We have only one partition, not setting this for now.
+		 */
+        SeekToCurrentErrorHandler errorHandler = new SeekToCurrentErrorHandler(
+                (record, exception) -> handleError(record, exception),
+                maxFailuresAllowed);
+        errorHandler.setCommitRecovered(true);
+        factory.setErrorHandler(errorHandler);
+        factory.getContainerProperties().setAckMode(ContainerProperties.AckMode.MANUAL_IMMEDIATE);
+        factory.getContainerProperties().setSyncCommits(true);
+        factory.getContainerProperties().setMissingTopicsFatal(false);
+        initKakfaMapperCache();
+        return factory;
+	}
+
+	private void initKakfaMapperCache() {
+		List<String> topics = new ArrayList<>();
+		topics.addAll(categoryTopicsCA);
+		topics.addAll(categoryTopicsUS);
+		topics.addAll(npckscsTopicsCA);
+		topics.addAll(npckscsTopicsUS);
+		topicMapperCache.loadTopicMapperCache(topics);
+		
+	}
+	
+	private void handleError(ConsumerRecord record, Exception ex) {
+		String topicName = record.topic();
+		LOGGER.error(CONSUMPTION_EXCEPTION_OCCURRED,
+				topicName,record.partition(),record.offset(),ex);
+	}
+	
+	@Bean("hbaseaclThreadPoolTaskExecutor")
+    public TaskExecutor getAsyncExecutor() {
+        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+        executor.setCorePoolSize(20);
+        executor.setMaxPoolSize(500);
+        executor.setWaitForTasksToCompleteOnShutdown(true);
+        executor.setThreadNamePrefix("HbaseACL-Categories-Async-");
+        return executor;
+    }
+
+}
+
+
+
+import java.time.LocalDateTime;
+
+import org.apache.avro.generic.GenericData;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.kafka.annotation.KafkaListener;
+import org.springframework.kafka.support.Acknowledgment;
+import org.springframework.stereotype.Service;
+
+@Service
+public class KafkaConsumer {
+
+	@Autowired
+	ProcessMessageService msgProcessor;
+
+	private static final Logger LOGGER = LoggerFactory.getLogger(KafkaConsumer.class);
+
+	@KafkaListener(topics = "#{'${hbase.acl.topics.ca.categories}'.split(',')}", 
+			groupId = "${hbase.acl.kafka.consumer.ca.categories.group-id}", 
+			concurrency = "${hbase.acl.kafka.concurrency}", 
+			containerFactory = "HBaseAcl_ContainerFactory_CA_Categories")
+	public void consumeCACategoryTopics(ConsumerRecord<String, ?> consumerRecord, Acknowledgment acknowledgment) {
+
+		consumeMessageFromTopic(consumerRecord, acknowledgment);
+
+	}
+
+	@KafkaListener(topics = "#{'${hbase.acl.topics.us.categories}'.split(',')}", 
+			groupId = "${hbase.acl.kafka.consumer.us.categories.group-id}", 
+			concurrency = "${hbase.acl.kafka.concurrency}", 
+			containerFactory = "HBaseAcl_ContainerFactory_US_Categories")
+	public void consumeUSCategoryTopics(ConsumerRecord<String, ?> consumerRecord, Acknowledgment acknowledgment) {
+
+		consumeMessageFromTopic(consumerRecord, acknowledgment);
+
+	}
+
+	@KafkaListener(topics = "#{'${hbase.acl.topics.ca.npckscs}'.split(',')}", 
+			groupId = "${hbase.acl.kafka.consumer.ca.npckscs.group-id}", 
+			concurrency = "${hbase.acl.kafka.concurrency}", 
+			containerFactory = "HBaseAcl_ContainerFactory_CA_npckscs")
+	public void consumeCANPCKSCSTopics(ConsumerRecord<String, ?> consumerRecord, Acknowledgment acknowledgment) {
+
+		consumeMessageFromTopic(consumerRecord, acknowledgment);
+
+	}
+
+	@KafkaListener(topics = "#{'${hbase.acl.topics.us.npckscs}'.split(',')}", 
+			groupId = "${hbase.acl.kafka.consumer.us.npckscs.group-id}", 
+			concurrency = "${hbase.acl.kafka.concurrency}",
+			containerFactory = "HBaseAcl_ContainerFactory_US_npckscs")
+	public void consumeUSNPCKSCSTopics(ConsumerRecord<String, ?> consumerRecord, Acknowledgment acknowledgment) {
+
+		consumeMessageFromTopic(consumerRecord, acknowledgment);
+
+	}
+
+	private void consumeMessageFromTopic(ConsumerRecord<String, ?> consumerRecord, Acknowledgment acknowledgment) {
+		String topicName = consumerRecord.topic();
+
+		LOGGER.debug(
+				"Message processing started for the record topic : {}, offset : {}," + " partition : {} , Time : {} ",
+				topicName, consumerRecord.offset(), consumerRecord.partition(), LocalDateTime.now());
+
+		try {
+			String jsonString = GenericData.get().toString(consumerRecord.value());
+
+			msgProcessor.processConsumerRecord(jsonString, topicName, consumerRecord.offset(),
+					consumerRecord.partition());
+
+		} catch (Exception ex) {
+			LOGGER.info("Message processing is for the record : topic : {}, offset : {}," + " partition : {}",
+					topicName, consumerRecord.offset(), consumerRecord.partition());
+			LOGGER.error("Error occurred during consumption of Topic due to : ", ex);
+		} finally {
+			acknowledgment.acknowledge();
+		}
+	}
+
+}
+
+
+
+
+import static com.gap.productcatalog.hbaseacl.kafka.model.ACLConstants.LIVE_REQUESTTYPE;
+import static com.gap.productcatalog.hbaseacl.kafka.model.ACLConstants.PREVIEW_REQUESTTYPE;
+import static com.gap.productcatalog.hbaseacl.hbase.constants.HBaseACLConstants.STATUS_ACLDB_SYNC_IN_PROGRESS;
+
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.Date;
+import java.util.List;
+import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.scheduling.annotation.Async;
+import org.springframework.scheduling.annotation.EnableAsync;
+import org.springframework.stereotype.Service;
+import org.springframework.util.CollectionUtils;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.gap.productcatalog.hbaseacl.exception.DGLNotificationException;
+import com.gap.productcatalog.hbaseacl.exception.TopicConsumptionException;
+import com.gap.productcatalog.hbaseacl.helpers.ProcessMessageHelper;
+import com.gap.productcatalog.hbaseacl.kafka.mapper.MapperInterface;
+import com.gap.productcatalog.hbaseacl.kafka.mapper.TopicMapperCache;
+import com.gap.productcatalog.hbaseacl.model.CategoriesStagingDTO;
+import com.gap.productcatalog.hbaseacl.model.NonMerchCatgStagingDTO;
+import com.gap.productcatalog.hbaseacl.repository.CategoriesStagingRepo;
+import com.gap.productcatalog.hbaseacl.repository.NonMerchCatgStagingRepo;
+import com.gap.productcatalog.hbaseacl.utils.Defaults;
+
+@Service
+@EnableAsync
+public class ProcessMessageService {
+
+	private static final String DGL_SRCH_REDIRECT = ".DGL.SRCH.REDIRECT.";
+
+	private static final Logger LOGGER = LoggerFactory.getLogger(ProcessMessageService.class);
+
+	@Autowired
+	private TopicMapperCache<?> topicMapperCache;
+
+	@Value("#{'${hbase.acl.topics.ca.categories}'.split(',')}")
+	private List<String> caCategories;
+
+	@Value("#{'${hbase.acl.topics.us.categories}'.split(',')}")
+	private List<String> usCategories;
+
+	@Value("#{'${hbase.acl.topics.ca.npckscs}'.split(',')}")
+	private List<String> caNonMerchCatg;
+
+	@Value("#{'${hbase.acl.topics.us.npckscs}'.split(',')}")
+	private List<String> usNonMerchCatg;
+
+	@Autowired
+	private CategoriesStagingRepo categoriesStagingRepo;
+
+	@Autowired
+	private NonMerchCatgStagingRepo nonMerchCatgStagingRepo;
+	
+	@Autowired
+	private ProcessMessageHelper processMessageHelper;
+	
+    @Value("${INSTANCE_INDEX:0}")
+    private Integer instanceIndex;
+
+	@Async("hbaseaclThreadPoolTaskExecutor")
+	public void processConsumerRecord(String msg, String topicName, Long offset, int partition) {
+
+		LOGGER.info("Current Thread..{} for Topic {} with Offset {} and Parttion {} ", Thread.currentThread().getName(),
+				topicName, offset, partition);
+
+		ObjectMapper mapper = new ObjectMapper();
+		CategoriesStagingDTO categoriesStagingDTO = new CategoriesStagingDTO();
+		NonMerchCatgStagingDTO nonMerchCatgStagingData = new NonMerchCatgStagingDTO();
+		try {
+			LOGGER.debug("Current Thread..{} for Topic {} ", Thread.currentThread().getName(), topicName);
+
+			final ObjectNode node = mapper.readValue(msg, ObjectNode.class);
+			if (caCategories.contains(topicName) || usCategories.contains(topicName)) {
+				setCatgData(msg, topicName, offset, categoriesStagingDTO, node);
+			}
+			if (caNonMerchCatg.contains(topicName) || usNonMerchCatg.contains(topicName)) {
+				setNonMerchCatgData(msg, topicName, offset, nonMerchCatgStagingData, node);
+			}
+
+		} catch (IOException e) {
+			throw new TopicConsumptionException("Internal Error | Failed to process" + " Topic :" + topicName
+					+ " with offset : " + offset + " and partition : " + partition,  e);
+			
+		}
+
+	}
+
+	private void setCatgData(String msg, String topicName, Long offset, CategoriesStagingDTO catgStagingData,
+			ObjectNode node) {
+
+		String brand = node.get(Defaults.BRAND).asText();
+		Long channel = node.get(Defaults.CHANNEL).asLong();
+		String market = node.get(Defaults.MARKET).asText();
+		Long entityId = node.get(Defaults.WEB_CATG_NUMBER).asLong();
+		String requesttype = "";
+		if (topicMapperCache.getPreviewTopics().contains(topicName)) {
+			requesttype = PREVIEW_REQUESTTYPE;
+		} else {
+			requesttype = LIVE_REQUESTTYPE;
+		}
+
+		catgStagingData.setTopicName(topicName);
+		catgStagingData.setTopicData(msg);
+		catgStagingData.setOffset(offset);
+		catgStagingData.setBrand(brand);
+		catgStagingData.setChannel(channel);
+		catgStagingData.setCreatedDateTime(new Date());
+		catgStagingData.setEntityId(entityId);
+		catgStagingData.setMarket(market);
+		catgStagingData.setRequesttype(requesttype);
+		catgStagingData.setStatus(Defaults.STATUS_CONSUMED_TOPIC_DATA);
+
+		catgStagingData = categoriesStagingRepo.save(catgStagingData);
+
+		if (Objects.nonNull(catgStagingData)) {
+			LOGGER.info("Successfully saved Category for {},{} and {} with Category Number :{}", brand, market,
+					requesttype, entityId);
+		}
+	}
+
+	private void setNonMerchCatgData(String msg, String topicName, Long offset,
+			NonMerchCatgStagingDTO nonMerchCatgStagingData, ObjectNode node) {
+		String brand = node.get(Defaults.BRAND).asText();
+		Long channel = node.get(Defaults.CHANNEL).asLong();
+		String market = node.get(Defaults.MARKET).asText();
+		Long entityId = 0L;
+		String searchTerm = "";
+		if (topicName.contains(DGL_SRCH_REDIRECT)) {
+			searchTerm = node.get(Defaults.SEARCH_TERM).asText();
+		} else {
+			entityId = node.get(Defaults.WEB_CATG_NUMBER).asLong();
+		}
+
+		String requesttype = "";
+		if (topicMapperCache.getPreviewTopics().contains(topicName)) {
+			requesttype = PREVIEW_REQUESTTYPE;
+		} else {
+			requesttype = LIVE_REQUESTTYPE;
+		}
+
+		String payloadType = Defaults.CATEGORY;
+		if (topicName.contains(DGL_SRCH_REDIRECT)) {
+			payloadType = Defaults.SEARCH_TERM;
+		} else if (topicName.contains(".DGL.CUSTSERVICE.")) {
+			payloadType = Defaults.CUSTOMER_SERVICE;
+		} else if (topicName.contains(".DGL.NONPDTCATG.")) {
+			payloadType = Defaults.NONPRODUCT_CATEGORY;
+		}
+		nonMerchCatgStagingData.setTopicName(topicName);
+		nonMerchCatgStagingData.setTopicData(msg);
+		nonMerchCatgStagingData.setOffset(offset);
+		nonMerchCatgStagingData.setBrand(brand);
+		nonMerchCatgStagingData.setChannel(channel);
+		nonMerchCatgStagingData.setCreatedDateTime(new Date());
+		nonMerchCatgStagingData.setPayloadType(payloadType);
+		if (topicName.contains(DGL_SRCH_REDIRECT)) {
+			nonMerchCatgStagingData.setSearchTerm(searchTerm);
+		} else {
+			nonMerchCatgStagingData.setEntityId(entityId);
+		}
+		nonMerchCatgStagingData.setMarket(market);
+		nonMerchCatgStagingData.setRequesttype(requesttype);
+		nonMerchCatgStagingData.setStatus(Defaults.STATUS_CONSUMED_TOPIC_DATA);
+
+		nonMerchCatgStagingData = nonMerchCatgStagingRepo.save(nonMerchCatgStagingData);
+
+		if (Objects.nonNull(nonMerchCatgStagingData)) {
+			LOGGER.info("Successfully saved Topic {}  for {},{} and {} with Entity Id:  {} or  Search term  :{}",
+					topicName, brand, market, requesttype, entityId, searchTerm);
+		}
+	}
+
+	public enum PayLoads {
+		US_CATEGORIES, CA_CATEGORIES, KEYWORD_SEARCH, CUSTOMER_SERVICE, NONPRODUCT_CATEGORY
+	}
+
+	public void fetchAndPopulateCategoryTopicDataTables(PayLoads payLoadType) {
+
+		List<CategoriesStagingDTO> catgEntityDataList = new ArrayList<>();
+		List<NonMerchCatgStagingDTO> nonMerchCatgEntityDataList = new ArrayList<>();
+		String brand = "ON";
+		switch (payLoadType) {
+		case US_CATEGORIES:
+			categoriesStagingRepo.purgeDuplicateCatgsFromStagingTable(brand, "US");
+			catgEntityDataList = categoriesStagingRepo.getCategoriesFromStagingTable("US",Defaults.STATUS_CONSUMED_TOPIC_DATA,instanceIndex);
+
+			break;
+		case CA_CATEGORIES:
+			categoriesStagingRepo.purgeDuplicateCatgsFromStagingTable(brand, "CAN");
+			catgEntityDataList = categoriesStagingRepo.getCategoriesFromStagingTable("CAN",Defaults.STATUS_CONSUMED_TOPIC_DATA,instanceIndex);
+			break;
+		case KEYWORD_SEARCH:
+			List<NonMerchCatgStagingDTO> searchTermsDataList = nonMerchCatgStagingRepo
+					.findFirst500ByPayloadTypeAndStatus(Defaults.SEARCH_TERM, Defaults.STATUS_CONSUMED_TOPIC_DATA);
+			if (!CollectionUtils.isEmpty(searchTermsDataList)) {
+				saveToTopicDataTableForSearchTerms(searchTermsDataList, payLoadType.toString());
+			}
+			break;
+		case CUSTOMER_SERVICE:
+			nonMerchCatgEntityDataList = nonMerchCatgStagingRepo
+					.findFirst500ByPayloadTypeAndStatus(Defaults.CUSTOMER_SERVICE, Defaults.STATUS_CONSUMED_TOPIC_DATA);
+			break;
+		case NONPRODUCT_CATEGORY:
+			nonMerchCatgEntityDataList = nonMerchCatgStagingRepo.findFirst500ByPayloadTypeAndStatus(
+					Defaults.NONPRODUCT_CATEGORY, Defaults.STATUS_CONSUMED_TOPIC_DATA);
+			break;
+		default:
+			break;
+		}
+
+		if (!CollectionUtils.isEmpty(catgEntityDataList)) {
+			saveToTopicDataTableForCategories(catgEntityDataList, payLoadType.toString());
+		}
+		if (!CollectionUtils.isEmpty(nonMerchCatgEntityDataList)) {
+			saveToTopicDataTableForNonMerchCategories(nonMerchCatgEntityDataList, payLoadType.toString());
+		}
+
+	}
+
+	private void saveToTopicDataTableForCategories(List<CategoriesStagingDTO> entityDataList, String payLoadType) {
+		
+		List<CategoriesStagingDTO> entitiesToBeProcessed = new ArrayList<>();
+		
+		for (CategoriesStagingDTO dto : entityDataList) {
+			entitiesToBeProcessed.add(dto);
+			updateToInProgressStatusForProcessingRecords(dto);
+		}
+		
+		List<CompletableFuture<CategoriesStagingDTO>> futures = new ArrayList<>();
+		for (CategoriesStagingDTO entity : entitiesToBeProcessed) {
+			futures.add(processMessageHelper.checkAndInsertCategoriesData(entity, payLoadType));
+		}
+		
+		for (CompletableFuture<CategoriesStagingDTO> future : futures) {
+			try {
+				if (Objects.nonNull(future)) {
+				LOGGER.info("Processing completed for CategoryData with  entityId:{} and Topic Offset : {}",
+					  future.get().getEntityId(), future.get().getOffset());
+				}
+			} catch (Exception e) {
+				LOGGER.error("Exception occured while processing CategoryData from Staging Table  ", e.getCause());
+			}
+		}
+		
+	}
+
+	private void saveToTopicDataTableForNonMerchCategories(List<NonMerchCatgStagingDTO> entityDataList,
+			String payLoadType) {
+		
+		List<NonMerchCatgStagingDTO> entitiesToBeProcessed = new ArrayList<>();
+		
+		for (NonMerchCatgStagingDTO dto : entityDataList) {
+			List<NonMerchCatgStagingDTO> similarEntities = nonMerchCatgStagingRepo
+					.findByEntityIdAndBrandAndMarketAndRequesttypeAndChannelAndStatus(dto.getEntityId(), dto.getBrand(),
+							dto.getMarket(), dto.getRequesttype(), dto.getChannel(),
+							Defaults.STATUS_CONSUMED_TOPIC_DATA);
+
+			if (!CollectionUtils.isEmpty(similarEntities) && similarEntities.size() >1 ) {
+				// read the latest record for this ENTITY from DB
+				NonMerchCatgStagingDTO latestEntity = Collections.max(similarEntities,
+						Comparator.comparing(entity -> entity.getCreatedDateTime()));
+
+				// update the status of all records belonging to the entity to
+				// PROCESSING_SIMILAR_RECORD
+				// update the ProductData table
+				nonMerchCatgStagingRepo.updateCategoryDataStatusForEntity(dto.getEntityId(), dto.getBrand(),
+						dto.getMarket(), dto.getRequesttype(), dto.getChannel(), Defaults.PROCESSING_SIMILAR_RECORD);
+
+				LOGGER.info("Processing record for {} ProductData with id:{}, entityId:{} and Topic Offset : {}",
+						payLoadType, latestEntity.getId(), latestEntity.getEntityId(), latestEntity.getOffset());
+
+				// process the latest record in topicMapper
+				entitiesToBeProcessed.add(latestEntity);
+			} else {
+				entitiesToBeProcessed.add(dto);
+			}
+		}
+		
+		List<CompletableFuture<NonMerchCatgStagingDTO>> futures = new ArrayList<>();
+		for (NonMerchCatgStagingDTO entity : entitiesToBeProcessed) {
+			futures.add(processMessageHelper.checkAndInsertNonMerchCategoriesData(entity, payLoadType));
+		}
+		
+		for (CompletableFuture<NonMerchCatgStagingDTO> future : futures) {
+			try {
+				if (Objects.nonNull(future)) {
+				LOGGER.info("Processing completed for NonMerchCategoryData with  entityId:{} and Topic Offset : {}",
+					  future.get().getEntityId(), future.get().getOffset());
+				}
+			} catch (InterruptedException | ExecutionException e) {
+				LOGGER.error("Exception occured while processing NonMerchCategoryData from Staging Table  ", e);
+			}
+		}
+		
+	}
+
+	private void saveToTopicDataTableForSearchTerms(List<NonMerchCatgStagingDTO> entityDataList, String payLoadType) {
+		for (NonMerchCatgStagingDTO dto : entityDataList) {
+			List<NonMerchCatgStagingDTO> similarEntities = nonMerchCatgStagingRepo
+					.findBySearchTermAndBrandAndMarketAndRequesttypeAndChannelAndStatus(dto.getSearchTerm(),
+							dto.getBrand(), dto.getMarket(), dto.getRequesttype(), dto.getChannel(),
+							Defaults.STATUS_CONSUMED_TOPIC_DATA);
+
+			if (!CollectionUtils.isEmpty(similarEntities)) {
+				// read the latest record for this ENTITY from DB
+				NonMerchCatgStagingDTO latestEntity = Collections.max(similarEntities,
+						Comparator.comparing(entity -> entity.getCreatedDateTime()));
+
+				// update the status of all records belonging to the entity to
+				// PROCESSING_SIMILAR_RECORD
+				// update the ProductData table
+				nonMerchCatgStagingRepo.updateCategoryDataStatusForSearchTerm(dto.getSearchTerm(), dto.getBrand(),
+						dto.getMarket(), dto.getRequesttype(), dto.getChannel(), Defaults.PROCESSING_SIMILAR_RECORD);
+
+				LOGGER.info("Processing record for {} ProductData with id:{}, entityId:{} and Topic Offset : {}",
+						payLoadType, latestEntity.getId(), latestEntity.getEntityId(), latestEntity.getOffset());
+
+				// process the latest record in topicMapper
+				processMessageHelper.checkAndInsertNonMerchCategoriesData(latestEntity, payLoadType);
+			} else {
+				processMessageHelper.checkAndInsertNonMerchCategoriesData(dto, payLoadType);
+			}
+		}
+	}
+
+	public Object persistToTopicDataTable(String msg, String topicName) throws DGLNotificationException {
+		MapperInterface<?> mapperInterface = topicMapperCache.getMapper(topicName);
+		return mapperInterface.mapAndSaveMessage(msg, topicName);
+	}
+	
+	private void updateToInProgressStatusForProcessingRecords(CategoriesStagingDTO categoriesStagingDTO) {
+		categoriesStagingRepo.updateCategoryStagingDataStatusForEntity(categoriesStagingDTO.getEntityId(),
+				categoriesStagingDTO.getBrand(), categoriesStagingDTO.getMarket(),categoriesStagingDTO.getRequesttype(),
+				categoriesStagingDTO.getChannel(), STATUS_ACLDB_SYNC_IN_PROGRESS);
+	}
+}
+
+
+
+
+
+
+
