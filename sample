@@ -1,0 +1,364 @@
+consumer:
+  initialStartupDelayInMillis: 120000
+  kafka:
+    bootstrapServers: http://localhost:9092
+    schemaRegistry: http://localhost:8081
+    timeout: 500000
+    keyDeserializer: org.apache.kafka.common.serialization.StringDeserializer
+    valueDeserializer: io.confluent.kafka.serializers.KafkaAvroDeserializer
+    autoOffsetReset: latest
+    enableAutoCommit: false
+    sslEnabled: false
+    maxPollRecordsConfig: 1
+    maxPollInternalMsConfig: 300000
+    ssl:
+      trustStoreLocation:
+      trustStorePassword:
+      trustStoreType: JKS
+      keyStoreLocation:
+      keyStorePassword:
+      keyStoreType: JKS
+      keyPassword:
+      protocol: SSL
+      basicAuthUser:
+      basicAuthUserPass:
+    groups:
+      - name: category
+        id: CG.HBASEACL.CATEGORY
+        partitions: 5
+        topics:
+          # - topic name | business_unit_id
+          - TP.DGL.CATG.ONUS.PRV | 3
+          - TP.DGL.CATG.ONCA.PRV | 9
+      - name: category_cs
+        id: CG.HBASEACL.CUSTSERVICE.CATEGORY
+        partitions: 1
+        topics:
+          - TP.DGL.CUSTSERVICE.ONUS.PRV | 3
+          - TP.DGL.CUSTSERVICE.ONCA.PRV | 9
+      - name: category_np
+        id: CG.HBASEACL.NONPRODUCT.CATEGORY
+        partitions: 1
+        topics:
+          - TP.DGL.NONPDTCATG.ONUS.PRV | 3
+          - TP.DGL.NONPDTCATG.ONCA.PRV | 9
+      - name: style
+        id: CG.HBASEACL.STYLE
+        partitions: 5
+        topics:
+          - TP.DGL.STYLE.ONUS.PRV | 3
+          - TP.DGL.STYLE.ONCA.PRV | 9
+      - name: customer_choice
+        id: CG.HBASEACL.CUSTOMERCHOICE
+        partitions: 5
+        topics:
+          - TP.DGL.CC.ONUS.PRV | 3
+          - TP.DGL.CC.ONCA.PRV | 9
+      - name: sku
+        id: CG.HBASEACL.SKU
+        partitions: 5
+        topics:
+          - TP.DGL.SKU.ONUS.PRV | 3
+          - TP.DGL.SKU.ONCA.PRV | 9
+      - name: style_nm
+        id: CG.HBASEACL.NONMRCH.STYLE
+        partitions: 1
+        topics:
+          - TP.DGL.NONMRCHSTYLE.ONUS.PRV | 3
+          - TP.DGL.NONMRCHSTYLE.ONCA.PRV | 9
+      - name: customer_choice_nm
+        id: CG.HBASEACL.NONMRCH.CUSTOMERCHOICE
+        partitions: 1
+        topics:
+          - TP.DGL.NONMRCHCC.ONUS.PRV | 3
+          - TP.DGL.NONMRCHCC.ONCA.PRV | 9
+      - name: sku_nm
+        id: CG.HBASEACL.NONMRCH.SKU
+        partitions: 1
+        topics:
+          - TP.DGL.NONMRCHSKU.ONUS.PRV | 3
+          - TP.DGL.NONMRCHSKU.ONCA.PRV | 9
+          
+          
+          
+          
+          
+
+
+
+
+
+
+consumer:
+  kafka:
+    bootstrapServers: g-vmx-2n-hubapp-confluent-kb-001.dev.azeus.gaptech.com:9092, g-vmx-2n-hubapp-confluent-kb-002.dev.azeus.gaptech.com:9092, g-vmx-2n-hubapp-confluent-kb-003.dev.azeus.gaptech.com:9092
+    schemaRegistry: https://g-vmx-2n-hubapp-confluent-cc-001.dev.azeus.gaptech.com:8081
+    sslEnabled: true
+    ssl:
+      trustStoreLocation: /app/BOOT-INF/classes/client-ssl/preprod.pim.kafka.client.truststore.jks
+      trustStorePassword: hbas3aclc0nsum3r!
+      trustStoreType: JKS
+      keyStoreLocation: /app/BOOT-INF/classes/client-ssl/preprod.pim.kafka.client.keystore.jks
+      keyStorePassword: hbas3aclc0nsum3r!
+      keyStoreType: JKS
+      keyPassword: hbas3aclc0nsum3r!
+      protocol: SSL
+      basicAuthUser: s-pim-hbaseacl
+      basicAuthUserPass: 56?%bKuL$_Zxx#u
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      import com.gap.productcatalog.hbaseacl.consumer.listener.EventListener;
+import lombok.extern.slf4j.Slf4j;
+import org.apache.kafka.clients.consumer.ConsumerConfig;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.kafka.annotation.EnableKafka;
+import org.springframework.kafka.core.DefaultKafkaConsumerFactory;
+import org.springframework.kafka.listener.AcknowledgingMessageListener;
+import org.springframework.kafka.listener.ConcurrentMessageListenerContainer;
+import org.springframework.kafka.listener.ContainerProperties;
+
+import javax.annotation.Resource;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import static org.apache.kafka.common.config.SslConfigs.SSL_KEYSTORE_LOCATION_CONFIG;
+import static org.apache.kafka.common.config.SslConfigs.SSL_KEYSTORE_PASSWORD_CONFIG;
+import static org.apache.kafka.common.config.SslConfigs.SSL_KEYSTORE_TYPE_CONFIG;
+import static org.apache.kafka.common.config.SslConfigs.SSL_KEY_PASSWORD_CONFIG;
+import static org.apache.kafka.common.config.SslConfigs.SSL_TRUSTSTORE_LOCATION_CONFIG;
+import static org.apache.kafka.common.config.SslConfigs.SSL_TRUSTSTORE_PASSWORD_CONFIG;
+import static org.apache.kafka.common.config.SslConfigs.SSL_TRUSTSTORE_TYPE_CONFIG;
+
+@EnableKafka
+@Configuration
+@Slf4j
+public class KafkaConfiguration {
+
+    public static final String SECURITY_PROTOCOL_NAME_CONFIG = "security.protocol";
+    public static final String SCHEMA_REGISTRY_URL = "schema.registry.url";
+    public static final String BASIC_AUTH_CREDENTIALS_SOURCE = "basic.auth.credentials.source";
+    public static final String BASIC_AUTH_USER_INFO = "basic.auth.user.info";
+    public static final int BUSINESS_UNIT_INDEX = 1;
+
+    @Resource
+    KafkaProperties kafkaProperties;
+
+    @Resource
+    EventListener eventListener;
+
+    @Bean
+    public List<ConcurrentMessageListenerContainer<String, Object>> kafkaConsumers() {
+        List<ConcurrentMessageListenerContainer<String, Object>> consumers =
+                new ArrayList<>(kafkaProperties.getGroups().size());
+        for (KafkaProperties.Group g : kafkaProperties.getGroups()) {
+            ContainerProperties containerProperties =
+                    new ContainerProperties(g.getTopics().stream()
+                            .map(t -> t.split("\\|")[0].trim()).toArray(String[]::new));
+            containerProperties.setAckMode(ContainerProperties.AckMode.MANUAL_IMMEDIATE);
+            containerProperties.setMessageListener((AcknowledgingMessageListener<String, Object>)
+                    (record, acknowledgment) -> {
+                        try {
+                            String[] topicData = g.getTopics().stream().filter(t -> t.contains(record.topic()))
+                                    .findFirst()
+                                    .orElseThrow(() ->
+                                            new RuntimeException("ConsumerException.WRONG_KAFKA_CONFIGURATION"))
+                                    .split("\\|");
+                            eventListener.processMessage(
+                                    topicData[BUSINESS_UNIT_INDEX].trim(),
+                                    g.getName(), record.key(), record.value());
+                            assert acknowledgment != null;
+                            acknowledgment.acknowledge();
+                        } catch (Exception e) {
+                            log.error(String.valueOf(e));
+                        }
+                    });
+            ConcurrentMessageListenerContainer<String, Object> consumer =
+                    new ConcurrentMessageListenerContainer<String, Object>(
+                            new DefaultKafkaConsumerFactory<String, Object>(consumerConfig(g.getId())),
+                            containerProperties);
+            consumer.setConcurrency(g.getPartitions());
+            consumers.add(consumer);
+
+        }
+        return consumers;
+    }
+
+    public Map<String, Object> consumerConfig(String groupId) {
+        Map<String, Object> props = new HashMap<>();
+
+        props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, kafkaProperties.getBootstrapServers());
+        props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, kafkaProperties.getKeyDeserializer());
+        props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG,
+                kafkaProperties.getValueDeserializer());
+        props.put(SCHEMA_REGISTRY_URL, kafkaProperties.getSchemaRegistry());
+        props.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, kafkaProperties.getEnableAutoCommit());
+        props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, kafkaProperties.getAutoOffsetReset());
+        props.put(ConsumerConfig.MAX_POLL_RECORDS_CONFIG, kafkaProperties.getMaxPollRecordsConfig());
+        props.put(ConsumerConfig.MAX_POLL_INTERVAL_MS_CONFIG, kafkaProperties.getMaxPollInternalMsConfig());
+        props.put(ConsumerConfig.SESSION_TIMEOUT_MS_CONFIG, kafkaProperties.getTimeout());
+        props.put(ConsumerConfig.GROUP_ID_CONFIG, groupId);
+
+        if (kafkaProperties.isSslEnabled()) {
+            props.put(SSL_TRUSTSTORE_LOCATION_CONFIG, kafkaProperties.getSsl().getTrustStoreLocation());
+            props.put(SSL_TRUSTSTORE_PASSWORD_CONFIG, kafkaProperties.getSsl().getTrustStorePassword());
+            props.put(SSL_KEYSTORE_LOCATION_CONFIG, kafkaProperties.getSsl().getKeyStoreLocation());
+            props.put(SSL_KEYSTORE_PASSWORD_CONFIG, kafkaProperties.getSsl().getKeyStorePassword());
+            props.put(SSL_KEY_PASSWORD_CONFIG, kafkaProperties.getSsl().getKeyPassword());
+            props.put(SSL_TRUSTSTORE_TYPE_CONFIG, kafkaProperties.getSsl().getTrustStoreType());
+            props.put(SSL_KEYSTORE_TYPE_CONFIG, kafkaProperties.getSsl().getKeyStoreType());
+            props.put(SECURITY_PROTOCOL_NAME_CONFIG, kafkaProperties.getSsl().getProtocol());
+            props.put(BASIC_AUTH_CREDENTIALS_SOURCE, "USER_INFO");
+            props.put(BASIC_AUTH_USER_INFO, String.join(":", kafkaProperties.getSsl().getBasicAuthUser(),
+                    kafkaProperties.getSsl().getBasicAuthUserPass()));
+        }
+
+        return props;
+    }
+
+}
+
+
+
+
+
+
+
+import lombok.Getter;
+import lombok.Setter;
+import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.stereotype.Component;
+
+import java.util.List;
+
+@Getter
+@Setter
+@Component
+@ConfigurationProperties(prefix = "consumer.kafka")
+public class KafkaProperties {
+
+    private String bootstrapServers;
+    private String schemaRegistry;
+    private Integer timeout;
+    private boolean sslEnabled;
+    private String keyDeserializer;
+    private String valueDeserializer;
+    private String autoOffsetReset;
+    private Boolean enableAutoCommit;
+    private int maxPollRecordsConfig;
+    private int maxPollInternalMsConfig;
+    private Ssl ssl;
+    private List<Group> groups;
+
+    @Getter
+    @Setter
+    public static class Group {
+        private String name;
+        private String id;
+        private int partitions;
+        private List<String> topics;
+    }
+
+    @Getter
+    @Setter
+    public static class Ssl {
+
+        private String trustStoreLocation;
+        private String trustStorePassword;
+        private String trustStoreType;
+        private String keyStoreLocation;
+        private String keyStorePassword;
+        private String keyStoreType;
+        private String keyPassword;
+        private String protocol;
+        private String basicAuthUser;
+        private String basicAuthUserPass;
+
+    }
+}
+
+
+
+
+
+
+
+import com.gap.productcatalog.hbaseacl.consumer.model.EventAudit;
+import com.gap.productcatalog.hbaseacl.consumer.service.EventService;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.kafka.listener.ConcurrentMessageListenerContainer;
+import org.springframework.stereotype.Service;
+
+import javax.annotation.Resource;
+import java.time.LocalDateTime;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+@Service
+@Slf4j
+public class EventListener {
+
+    @Resource
+    List<ConcurrentMessageListenerContainer<String, Object>> kafkaConsumers;
+
+    @Resource
+    EventService eventService;
+
+    public void start() {
+        kafkaConsumers.forEach(
+                consumer -> {
+                    if (!consumer.isRunning()) {
+                        consumer.start();
+                    }
+                }
+        );
+    }
+
+    public void stop() {
+        kafkaConsumers.forEach(
+                consumer -> {
+                    if (consumer.isRunning()) {
+                        consumer.stop();
+                    }
+                }
+        );
+    }
+
+    public void processMessage(String businessUnitId, String eventType, String key, Object payload) {
+        EventAudit eventAudit = EventAudit.builder()
+                .eventType(eventType)
+                .entityId(key)
+                .businessUnitId(businessUnitId)
+                .actionTs(LocalDateTime.now())
+                .build();
+        eventService.process(eventAudit, payload.toString());
+    }
+
+    public Map<String, Map<String, String>> getConsumersStatus() {
+        Map<String, Map<String, String>> status = new HashMap<>();
+        kafkaConsumers.forEach(
+                consumer -> {
+                    Map<String, String> data = new HashMap<>();
+                    data.put("Partitions", String.valueOf(consumer.getConcurrency()));
+                    data.put("Running", String.valueOf(consumer.isRunning()));
+                    status.put(consumer.getGroupId(), data);
+                }
+        );
+        return status;
+    }
+}
+
+
+
